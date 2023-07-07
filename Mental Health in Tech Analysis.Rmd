@@ -1,0 +1,200 @@
+---
+title: "Mental Health in Tech Exploratory Analysis"
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+---
+Context:
+
+This dataset is from a 2016 survey on the state of mental health in the tech industry, provided by Open Sourcing Mental Illness on kaggle.com (original dataset can be found at https://www.kaggle.com/osmi/mental-health-in-tech-2016). 
+
+The sample is adapted from a project that I completed for the Applied Statistical Computing course at Columbia University, where we tasked with conducting exploratory analysis on a few variables we found interesting, as well as performing hypothesis testing for a hypothetical business problem. I’ve omitted many of the other cleaning steps I performed for the sake of space, and simply uploaded the cleaned version of the csv. 
+
+```{r}
+# Load data -------------------------------------------------------------------
+data <- read.csv('cleaned-mental-heath-in-tech-2016_20161114 copy.csv')
+```
+```{r}
+# Clean data ------------------------------------------------------------------
+
+library("dplyr")
+# rename columns 
+data <- data %>%
+  rename("insured" = "Do.you.have.medical.coverage..private.insurance.or.state.provided..which.includes.treatment.of..mental.health.issues.",
+         "ided_gender" = "What.is.your.gender.",
+         "country" = "What.country.do.you.live.in.",
+         "self_employed" = "Are.you.self.employed.",
+         "age" = "What.is.your.age.",
+         "current_disorder" = "Do.you.currently.have.a.mental.health.disorder.",
+         "us_state" = "What.US.state.or.territory.do.you.live.in.")
+```
+```{r}
+# Turn gender into more discrete categories: 
+# male, female, non-binary, transgender, and other
+
+code_gender <- function(gender) {
+  gender_clean <- tolower(trimws(gender))
+  if(grepl("trans|mtf|ftm", gender_clean)) {
+    return("Transgender")
+  } else if(grepl("nb|nonbinary|fluid|non-binary|enby|agender|bigender|
+                  |androgynous|genderqueer", gender_clean)) {
+    return("Non-binary")
+  } else if(grepl("female|woman", gender_clean) | gender_clean == "f") {
+    return("Female")
+  } else if((grepl("male|mail|man", gender_clean) | gender_clean == "m") & 
+            !grepl("human", gender_clean)) {
+    return("Male")
+  } else {
+    return("Other")
+  }
+}
+
+# Bind coded gender to original dataframe
+data$coded_gender <- sapply(data$ided_gender, code_gender)
+```
+
+``` {r}
+# Exploratory data analysis----------------------------------------------------
+
+# Plot distribution of gender
+library(ggplot2)
+
+p <- ggplot(data, aes(x = factor(coded_gender))) +
+  geom_bar(fill = "steelblue") +
+  xlab("Gender") + ylab("Count") + ggtitle("Distribution of Gender") +
+  theme(plot.title = element_text(hjust = 0.5))
+p
+```
+```{r}
+# Examine geographical distribution of responses within the US
+
+library("usmap")
+
+# Abbreviate state names (needed for this package)
+state_abb <- function(state) {
+  return(state.abb[state.name==state])
+}
+data$state <- sapply(data$us_state, state_abb)
+
+# Select data with an identified state & shape into required format
+state_data <- data[data$state %in% state.abb,]
+new_state_data <- as.data.frame(table(unlist(state_data$state)))
+colnames(new_state_data) <- c("state", "number of respondents")
+
+# Plot
+plot_usmap(data = new_state_data, values = "number of respondents",) + 
+  labs(fill = "Number of Respondents") + theme(legend.position = "right")
+
+# Clear
+rm(new_state_data, state_data)
+```
+```{r}
+# Compare prevalence for different conditions across genders 
+# Note: only women and men used due to small sample sizes for other groups
+
+# Create temporary databases
+women <- data[data$coded_gender == "Female",]
+men <- data[data$coded_gender == "Male",]
+
+# Plot
+pink_pal <- colorRampPalette(colors = c("pink", "purple"))(10)
+blue_pal <- colorRampPalette(colors = c("lightblue", "blue"))(10)
+par(mfrow = c(1:2))
+barplot(colSums(subset(women, select = neurodevelopmental:gender))/nrow(women),
+        las = 2, col = pink_pal, ylab = "Prevalence", main = "Women", ylim = c(0, .45))
+barplot(colSums(subset(men, select = neurodevelopmental:gender))/nrow(men),
+        las = 2, col = blue_pal, ylab = "Prevalence", main = "Men", ylim = c(0, .45))
+
+# Clear
+rm(women, men, blue_pal, pink_pal)
+```
+
+```{r}
+# Examine comorbid conditions 
+
+# Calculate correlation matrix between conditions
+conditions <- subset(data, select = neurodevelopmental:gender)
+cormat <- cor(conditions)
+
+# Plot
+library(gplots)
+heatmap.2(cormat, dendrogram = "none", trace = "none", breaks = 100, col = bluered, offsetRow =0, offsetCol =0, srtCol=45,  adjCol = c(1,1), margins=c(10,10) )
+
+# Clear
+rm(conditions)
+```
+Conclusions: This dataset is highly skewed towards men and people in California, which aligns with expectations of the tech workforce. Although it women and men have similar patterns of mental illness, with mood disorders and anxiety disorders being the most prevalent, women seem to experience a higher prevalence in most disorders, although further testing would be needed to confirm the statistical significance of these differences. Consistent with previous research, there are positive correlations between many types of mental health disorders, especially mood and anxiety disorders. An interesting next direction would be to compare the prevalence of mental health disorders in the tech population with the general population. 
+
+```{r}
+# Business problem---------------------------------------------------------
+
+# Let's say we want to specifically target US citizens who are self-employed and 
+# who do not have mental health insurance for a new insurance plan. How can we 
+# target them? Does their demographic differ from those who are self-employed 
+# and insured?
+
+# Create datasets 
+
+uninsured_self_employed <- data[data$insured == 0 & data$country == "United States of America"
+                                & data$self_employed == 1, ]
+insured_self_employed <- data[data$insured == 1 & data$country == "United States of America"
+                                & data$self_employed == 1, ]
+```
+```{r}
+# check assumptions to perform tests
+
+# for two sample t-test: normality and equal variances
+
+# normality: sample sizes (88 for insured and 43 for uninsured) are large enough that the CLT applies
+
+# equal variance: use boxplot to visually verify
+boxplot(insured_self_employed$age, uninsured_self_employed$age)
+
+
+# for two proportion z test: test that n*p and n*(1-p) >= 10 
+
+nrow(uninsured_self_employed[uninsured_self_employed$coded_gender == "Male", ])
+nrow(uninsured_self_employed[uninsured_self_employed$coded_gender == "Female", ])
+nrow(insured_self_employed[insured_self_employed$coded_gender == "Male", ])
+nrow(insured_self_employed[insured_self_employed$coded_gender == "Female", ])
+
+nrow(uninsured_self_employed[uninsured_self_employed$current_disorder == "Yes", ])
+nrow(uninsured_self_employed[uninsured_self_employed$current_disorder != "Yes", ])
+nrow(insured_self_employed[insured_self_employed$current_disorder == "Yes", ])
+nrow(insured_self_employed[insured_self_employed$current_disorder != "Yes", ])
+
+# all assumptions are satisfied
+```
+
+```{r}
+# Examine demographic differences
+
+# Is the average age different for uninsured vs insured?
+t.test(x = uninsured_self_employed$age, 
+       y = insured_self_employed$age, 
+       alternative <- "greater", 
+       var.equal = TRUE)
+
+# Is the proportion of men different?
+prop.test(x = c(nrow(uninsured_self_employed[uninsured_self_employed$coded_gender == "Male", ]),
+                nrow(insured_self_employed[insured_self_employed$coded_gender == "Male", ])), 
+          n = c(nrow(uninsured_self_employed), nrow(insured_self_employed)), 
+          alternative = "greater")
+
+# Is the proportion of people who currently have diagnosed or self-diagnosed 
+# mental illness different between groups?
+prop.test(x = c(nrow(uninsured_self_employed[uninsured_self_employed$current_disorder == "Yes", ]),
+                nrow(insured_self_employed[insured_self_employed$current_disorder == "Yes", ])),
+          n = c(nrow(uninsured_self_employed), nrow(insured_self_employed)), 
+          alternative = "less")
+```
+Conclusions: 
+
+1) A substantial percentage (39.5%) of self-employed US tech workers who don't have mental health insurance are suffering from mental health disorders, indicating a potential need for additional mental health care options.
+
+2) Self-employed US tech workers that do not have mental health insurance are significantly more likely to be male than self-employed US tech workers who do have mental health insurance. Men in their 30s-mid 40s would likely be the best target for an additional insurance product.
+
+
+
